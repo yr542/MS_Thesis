@@ -1,0 +1,851 @@
+---
+title: "Dec_25_2018_Venn_Diagrams"
+author: "Yasmin Rajendran"
+date: "December 25, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,Library, warning=FALSE,message=FALSE, echo=FALSE,results='hide'}
+library(edgeR)
+library(limma)
+library(reshape2)
+library(gsubfn)
+library(plyr)
+library(dplyr)
+library(DataCombine)
+library(RFLPtools)
+library(gdata)
+library(stats)
+library(factoextra)
+library("biomaRt")
+library(knitr)
+library(org.Dr.eg.db)
+library(clusterProfiler)
+library(gtools)
+library(data.table)
+library(tidyr)
+library(gplots)
+library(RColorBrewer)
+library("biomaRt")
+library(ggplot2)
+library(gridExtra)
+library(knitr)
+library(ggmap)
+library(VennDiagram)
+```
+
+**Step 1**: Join the counts matrix to the Ensembl IDs. Do the 1 Way ANOVA with an FDR restriction. Create pie charts as well.
+
+```{r Counts_Matrix_To_Ensembl_IDs, echo=TRUE,warning=FALSE,message=FALSE, echo=FALSE,results='hide'}
+remove(list = ls())
+
+data <- read.delim("all.counts2_6_20_2018.txt", row.names=1, header=T)
+
+
+
+colnames( data ) <- paste(c("W", "W", "W", 
+                            "Ac", "Ac", "Ac", 
+                            "Hg001", "Hg001", "Hg001",
+                            "Hg01", "Hg01", "Hg01", 
+                            "Hg1", "Hg1", "Hg1", 
+                            "Tc01", "Tc01", "Tc01", 
+                            "Tc1", "Tc1", "Tc1", 
+                            "Tc01.Hg01", "Tc01.Hg01", "Tc01.Hg01", 
+                            "Tc01.Hg1", "Tc01.Hg1", "Tc01.Hg1",
+                            "Tc1.Hg01", "Tc1.Hg01","Tc1.Hg01", 
+                            "Tc1.Hg1", "Tc1.Hg1", "Tc1.Hg1"),sep="")
+
+group <- c("W", "W", "W", 
+           "Ac", "Ac", "Ac", 
+           "Hg001", "Hg001", "Hg001",
+           "Hg01", "Hg01", "Hg01", 
+           "Hg1", "Hg1", "Hg1", 
+           "Tc01", "Tc01", "Tc01", 
+           "Tc1", "Tc1", "Tc1", 
+           "Tc01.Hg01", "Tc01.Hg01", "Tc01.Hg01", 
+           "Tc01.Hg1", "Tc01.Hg1", "Tc01.Hg1",
+           "Tc1.Hg01", "Tc1.Hg01","Tc1.Hg01", 
+           "Tc1.Hg1", "Tc1.Hg1", "Tc1.Hg1")
+
+
+# Do normalization after merging in UniRef100 IDs
+
+# Import blast file
+
+Blasted_2 <-  read.table("Tom_v_Zf_6_20_2018.blast", sep = "\t")
+options(scipen = 999)
+
+colnames(Blasted_2) <- c("XLOC", "UniRef100","Col3", "Col4", "Col5")
+
+Blasted_2 <- Blasted_2[ -c(3:5) ]
+
+Blasted_Again <-  as.data.frame(lapply(Blasted_2[1:2], sub, pattern="\\s+.*", replacement=""))
+
+data <- cbind(XLOC = rownames(data), data) 
+
+Merged_UniRef <- merge(Blasted_Again, as.matrix(data), by = "XLOC")
+
+Removal <- c("XLOC")
+
+Removal_1 <- Merged_UniRef[ , !(names(Merged_UniRef) %in% Removal)]
+
+x_dt_aggreg <- aggregate(. ~ UniRef100, Removal_1, sum)
+
+Merged_UniRef <- x_dt_aggreg[,-1]
+rownames(Merged_UniRef) <- x_dt_aggreg[,1]
+
+# Take (non-normalized data) data and isolate the first column
+
+First_Col <-  as.data.frame( as.matrix(rownames(Merged_UniRef)) )
+
+rownames(data) <- NULL
+
+write.table(First_Col, file = "UniRef_100_IDs.txt", sep = " ", row.names= FALSE, col.names = FALSE )
+
+#Go to https://www.uniprot.org/uploadlists/ and convert from UniRef100 IDs to UniProtK
+
+#Copied to Notepad ++ and removed all the quotes. Then copied the list to the site.
+
+colnames(First_Col) <- "UniRef100"
+
+UniRef100_to_UniProtKB <- read.table( "Mapping_Table_UniRef_100_to_UniProtKB", sep="\t", header=TRUE, fill = TRUE)
+
+colnames(UniRef100_to_UniProtKB) <- c("UniRef100", "UniProtKB" )
+
+UniRef100_to_UniProtKB_merge_to_data <- merge(First_Col, UniRef100_to_UniProtKB, by = "UniRef100")
+
+colnames(UniRef100_to_UniProtKB_merge_to_data)[2] <- "UniProtKB"
+
+write.table(  (UniRef100_to_UniProtKB_merge_to_data[2] ), file = "UniProtKB.txt", sep = " ", row.names= FALSE, col.names = FALSE)
+
+##Look up the IDs in David restricting to the Zebrafish IDs.
+
+UniProtKB_Ensembl <- read.table("Dec_20_2018_UniProtKB_to_Ensembl_ID_From_David.txt", sep="\t")
+
+head(UniProtKB_Ensembl)
+
+UniProtKB_Ensembl_IDs_Only <- UniProtKB_Ensembl
+
+# Remove the species name column and the gene name column leaving the UniProtKB ID column and the Ensembl ID column
+
+UniProtKB_Ensembl_IDs_Only <- UniProtKB_Ensembl_IDs_Only [, -c(3:4)] 
+
+#Remove the first row as it contains the words "From" and "To"
+
+UniProtKB_Ensembl_IDs_Only <- UniProtKB_Ensembl_IDs_Only [-1,]
+
+# Name the columns
+
+names(UniProtKB_Ensembl_IDs_Only) <- c("UniProtKB", "Ensembl_ID")
+
+Merge_All_UniProtKB_UniRef100_Ensembl <- merge(UniProtKB_Ensembl_IDs_Only, UniRef100_to_UniProtKB, by = "UniProtKB")
+
+Dt_and_Merge_All <- merge (Merge_All_UniProtKB_UniRef100_Ensembl, x_dt_aggreg, by = "UniRef100" )
+
+Ensembl_ID_data_set <- Dt_and_Merge_All[ , -which(names(Dt_and_Merge_All) %in% c("UniRef100","UniProtKB"))]
+
+#Now on to aggregating by ID. 
+
+rm(list=setdiff(ls(), "Ensembl_ID_data_set"))
+
+Data_with_Ensembl_IDs_1 <- aggregate(. ~ Ensembl_ID, data = Ensembl_ID_data_set, sum)
+
+Data_with_Ensembl_IDs_1_1 <- transform(Data_with_Ensembl_IDs_1, 
+                          W = as.numeric(W), 
+                          W.1 = as.numeric(W.1),
+                          W.2 = as.numeric(W.2),
+                   
+                           Ac = as.numeric(Ac),
+                         Ac.1 = as.numeric(Ac.1),
+                         Ac.2 = as.numeric(Ac.2),
+                   
+                        Hg001 = as.numeric(Hg001),
+                      Hg001.1 = as.numeric(Hg001.1),
+                      Hg001.2 = as.numeric(Hg001.2),
+
+                        Hg01 = as.numeric(Hg01),
+                      Hg01.1 = as.numeric(Hg01.1),
+                      Hg01.2 = as.numeric(Hg01.2),
+
+                         Hg1 = as.numeric(Hg1),
+                       Hg1.1 = as.numeric(Hg1.1),
+                       Hg1.2 = as.numeric(Hg1.2),
+
+                        Tc01 = as.numeric(Tc01),
+                      Tc01.1 = as.numeric(Tc01.1),
+                      Tc01.2 = as.numeric(Tc01.2),
+
+                        Tc1 = as.numeric(Tc1),
+                      Tc1.1 = as.numeric(Tc1.1),
+                      Tc1.2 = as.numeric(Tc1.2),
+                        
+                  Tc01.Hg01 = as.numeric(Tc01.Hg01),
+                Tc01.Hg01.1 = as.numeric(Tc01.Hg01.1),
+                Tc01.Hg01.2 = as.numeric(Tc01.Hg01.2),
+
+                   Tc01.Hg1 = as.numeric(Tc01.Hg1),
+                 Tc01.Hg1.1 = as.numeric(Tc01.Hg1.1),
+                 Tc01.Hg1.2 = as.numeric(Tc01.Hg1.2),
+
+                   Tc1.Hg01 = as.numeric(Tc1.Hg01),
+                 Tc1.Hg01.1 = as.numeric(Tc1.Hg01.1),
+                 Tc1.Hg01.2 = as.numeric(Tc1.Hg01.2),
+
+                    Tc1.Hg1 = as.numeric(Tc1.Hg1),
+                  Tc1.Hg1.1 = as.numeric(Tc1.Hg1.1),
+                  Tc1.Hg1.2 = as.numeric(Tc1.Hg1.2) )
+
+
+
+M_N_1 <- as.matrix(Data_with_Ensembl_IDs_1_1)
+
+M_N_2 <- M_N_1[,-1]
+rownames(M_N_2) <- M_N_1[,1]
+M_N_1_ME <- M_N_2
+
+M_N_1_ME_1 <- transform(M_N_1_ME, 
+                          W = as.numeric(W), 
+                          W.1 = as.numeric(W.1),
+                          W.2 = as.numeric(W.2),
+                   
+                           Ac = as.numeric(Ac),
+                         Ac.1 = as.numeric(Ac.1),
+                         Ac.2 = as.numeric(Ac.2),
+                   
+                        Hg001 = as.numeric(Hg001),
+                      Hg001.1 = as.numeric(Hg001.1),
+                      Hg001.2 = as.numeric(Hg001.2),
+
+                        Hg01 = as.numeric(Hg01),
+                      Hg01.1 = as.numeric(Hg01.1),
+                      Hg01.2 = as.numeric(Hg01.2),
+
+                         Hg1 = as.numeric(Hg1),
+                       Hg1.1 = as.numeric(Hg1.1),
+                       Hg1.2 = as.numeric(Hg1.2),
+
+                        Tc01 = as.numeric(Tc01),
+                      Tc01.1 = as.numeric(Tc01.1),
+                      Tc01.2 = as.numeric(Tc01.2),
+
+                        Tc1 = as.numeric(Tc1),
+                      Tc1.1 = as.numeric(Tc1.1),
+                      Tc1.2 = as.numeric(Tc1.2),
+                        
+                  Tc01.Hg01 = as.numeric(Tc01.Hg01),
+                Tc01.Hg01.1 = as.numeric(Tc01.Hg01.1),
+                Tc01.Hg01.2 = as.numeric(Tc01.Hg01.2),
+
+                   Tc01.Hg1 = as.numeric(Tc01.Hg1),
+                 Tc01.Hg1.1 = as.numeric(Tc01.Hg1.1),
+                 Tc01.Hg1.2 = as.numeric(Tc01.Hg1.2),
+
+                   Tc1.Hg01 = as.numeric(Tc1.Hg01),
+                 Tc1.Hg01.1 = as.numeric(Tc1.Hg01.1),
+                 Tc1.Hg01.2 = as.numeric(Tc1.Hg01.2),
+
+                    Tc1.Hg1 = as.numeric(Tc1.Hg1),
+                  Tc1.Hg1.1 = as.numeric(Tc1.Hg1.1),
+                  Tc1.Hg1.2 = as.numeric(Tc1.Hg1.2) )
+
+
+M_N_1_ME_1 <- data.frame(Ensembl = row.names(M_N_1_ME_1), M_N_1_ME_1)
+
+rownames(M_N_1_ME_1) <- NULL
+
+colnames( M_N_1_ME_1 ) <- paste(c("Ensembl",
+                             "W", "W", "W", 
+                            "Ac", "Ac", "Ac", 
+                            "Hg001", "Hg001", "Hg001",
+                            "Hg01", "Hg01", "Hg01", 
+                            "Hg1", "Hg1", "Hg1", 
+                            "Tc01", "Tc01", "Tc01", 
+                            "Tc1", "Tc1", "Tc1", 
+                            "Tc01.Hg01", "Tc01.Hg01", "Tc01.Hg01", 
+                            "Tc01.Hg1", "Tc01.Hg1", "Tc01.Hg1",
+                            "Tc1.Hg01", "Tc1.Hg01","Tc1.Hg01", 
+                            "Tc1.Hg1", "Tc1.Hg1", "Tc1.Hg1"),sep="")
+group <- c("W", "W", "W", 
+           "Ac", "Ac", "Ac", 
+           "Hg001", "Hg001", "Hg001",
+           "Hg01", "Hg01", "Hg01", 
+           "Hg1", "Hg1", "Hg1", 
+           "Tc01", "Tc01", "Tc01", 
+           "Tc1", "Tc1", "Tc1", 
+           "Tc01.Hg01", "Tc01.Hg01", "Tc01.Hg01", 
+           "Tc01.Hg1", "Tc01.Hg1", "Tc01.Hg1",
+           "Tc1.Hg01", "Tc1.Hg01","Tc1.Hg01", 
+           "Tc1.Hg1", "Tc1.Hg1", "Tc1.Hg1")
+
+M_N_1_ME_1 <- as.data.frame(as.matrix(M_N_1_ME_1) )
+
+M_N_1_ME_1_1 <- M_N_1_ME_1[,-1]
+rownames(M_N_1_ME_1_1) <- M_N_1_ME_1[,1]
+
+M_N_1_ME_1_1[which( sapply( M_N_1_ME_1_1, class ) == 'factor' )] <- lapply( M_N_1_ME_1_1[which( sapply( M_N_1_ME_1_1, class ) == 'factor' )], function(x) as.numeric(as.character(x)) )
+
+# Counts with Ensembl IDs
+
+a <- as.matrix(M_N_1_ME_1_1)
+
+Counts_Data_Set_With_Aggregated_Ensembl_IDs <- a
+
+rm(list=setdiff(ls(), c("Counts_Data_Set_With_Aggregated_Ensembl_IDs", "group")) )
+
+
+# A dge list of the counts
+
+M_N <- DGEList(counts=  ( Counts_Data_Set_With_Aggregated_Ensembl_IDs ), group = group)
+
+# Now on to making DGElist
+
+keep <- rowSums(cpm(M_N)>1) >= 5
+
+kdge <- M_N [keep,]
+
+# Make a design matrix
+
+data_for_design_matrix <- read.csv("Experiment_Design.csv", header = TRUE, sep = ",")
+
+# Making a model.matrix Refered to: page 65 of EdgeR Manual
+
+design_1 <- model.matrix(~ Stressor, data= data_for_design_matrix)
+  
+# The low counts are filtered in kdge
+
+y <- kdge
+
+y <- estimateDisp(y ,design_1, robust=TRUE)
+
+fit <- glmQLFit(y, design_1, robust=TRUE)
+
+List_of_colnames_design  <- (  c( colnames(fit) ) )
+
+n_max <-nrow(Counts_Data_Set_With_Aggregated_Ensembl_IDs)
+
+for (i in (1:ncol(fit)) ) {
+  
+  qlf  <- glmQLFTest(fit, coef=i)
+  
+  Storing_qlf <- topTags(qlf, n = n_max)
+  
+  # Store as a data frame
+  
+  Df_qlf_stored <-  as.data.frame(Storing_qlf)
+  
+  # Restrict b P Value less than or equal to 0.01
+  
+  P_Val_Point01 <- subset(Df_qlf_stored, PValue <= 0.01)
+  
+  # Restrict b FDR less than or equal to 0.05
+  
+  FDR_0.05_Restriction <- subset(P_Val_Point01, FDR <= 0.05)
+  
+  # Store the IDs in a file for each treatment (with P value and FDr restrictions)
+  
+  file_name <- (c((paste(List_of_colnames_design[i],"P_Val_FDR_Restricted_One_Way_ANOVA_Final.csv",sep = "_"))))
+  
+  write.csv( FDR_0.05_Restriction, file = file_name)
+  
+  q <- list(FDR_0.05_Restriction)
+  
+  counter = 0
+  
+  for (p_val_FDR in q) {
+    
+    counter = counter + 1
+    Up_reg<- sum(p_val_FDR[,"logFC"] > 0)
+    Down_reg  <- sum(p_val_FDR[,"logFC"] < 0)
+    
+    Tabl_Up_and_Down_Vals <- as.matrix(c(Up_reg,Down_reg),ncol=1,byrow=TRUE) 
+    colnames(Tabl_Up_and_Down_Vals) <- c("a")
+    rownames(Tabl_Up_and_Down_Vals) <- c("Up","Down") 
+    Tabl_Up_and_Down_Vals_1 <- Tabl_Up_and_Down_Vals
+    Table_DT <- setDT(as.data.frame(Tabl_Up_and_Down_Vals), 
+                      keep.rownames = TRUE)[]
+    Tabl_Up_Down_PVal <- as.data.frame(Table_DT)
+    names(Tabl_Up_Down_PVal)[names(Tabl_Up_Down_PVal) == "rn"] <- "Regulation"
+    rownames(Tabl_Up_Down_PVal) <- NULL
+    
+    List_names <- list("P_Val_Point01_Plus_FDR05")
+    
+    # Since FDR is restricted to less than or equal to 0.1 for the ones with FDR restriction I am just placing FDR next to the ones with an FDR Restriction
+    
+    List_names_1_for_title_ggplot <- list("")
+    
+    List_of_colnames_design_1 <- c("(Intercept)", "Hg001", "Hg01", "Hg1",
+                                   "TCDD01", 
+                                   "in the Low Dose Combination",
+                                   "TCDD01.Hg1",
+                                   "TCDD1", "TCDD1.Hg01", 
+                                   "in the High Dose Combination",
+                                   "Water")
+    
+    pie_chart_ggplot <- ggplot(Tabl_Up_Down_PVal, aes(x= "", y= a, fill= Regulation)) + geom_bar(width = 1, stat = "identity") + coord_polar("y", start=0) + 
+      geom_text(aes( label = paste(rownames(Tabl_Up_and_Down_Vals_1) , (round (  (( c(Up_reg, Down_reg) )/sum(( c(Up_reg, Down_reg) ))*100) )  ), "%", sep = " ")), position = position_stack(vjust = 0.5) ) +
+      ggtitle(c((paste("Percentage Of RNAs Affected ", List_of_colnames_design_1[i], List_names_1_for_title_ggplot[counter] , sep = " ", collapse = NULL)))) + theme(axis.text = element_blank(),axis.ticks = element_blank(), panel.grid  = element_blank(), legend.title=element_blank(), axis.title = element_blank(), panel.background = element_blank())
+    
+    colnames(Tabl_Up_Down_PVal)[2] <- "The Number Of RNAs"
+    
+    jpeg(c((paste("GGPlotPie_Chart_Thesis_Paper", List_of_colnames_design_1[i], List_names[counter],".jpg" ,sep = " ", collapse = NULL))))
+    grid.arrange(pie_chart_ggplot, tableGrob(Tabl_Up_Down_PVal),ncol=1 )
+    dev.off()
+    
+    grid.arrange(pie_chart_ggplot, tableGrob(  Tabl_Up_Down_PVal),ncol=1 )
+    
+  }
+  
+  
+}
+```
+
+**Pre-Step 2:** Load the files with the restricted p value and FDR.
+
+```{r}
+
+# TCDD treatments
+
+Tc1_Post_Test_Restricted <- read.csv("StressorTCDD1_P_Val_FDR_Restricted_One_Way_ANOVA_Final.csv", header = TRUE, sep = ",")
+
+Tc01_Post_Test_Restricted <- read.csv("StressorTCDD01_P_Val_FDR_Restricted_One_Way_ANOVA_Final.csv", header = TRUE, sep = ",")
+
+# Hg treatments
+
+Hg1_Post_Test_Restricted <- read.csv("StressorHg1_P_Val_FDR_Restricted_One_Way_ANOVA_Final.csv", header = TRUE, sep = ",")
+
+Hg01_Post_Test_Restricted <- read.csv("StressorHg01_P_Val_FDR_Restricted_One_Way_ANOVA_Final.csv", header = TRUE, sep = ",")
+
+Hg001_Post_Test_Restricted <-
+  read.csv("StressorHg001_P_Val_FDR_Restricted_One_Way_ANOVA_Final.csv", header = TRUE, sep = ",")
+
+# Combination treatments
+
+LD_Combin_Test_Restricted <- read.csv("StressorTCDD01_Hg01_P_Val_FDR_Restricted_One_Way_ANOVA_Final.csv", header = TRUE, sep = ",")
+
+HD_Combin_Test_Restricted <- read.csv("StressorTCDD1_Hg1_P_Val_FDR_Restricted_One_Way_ANOVA_Final.csv", header = TRUE, sep = ",")
+```
+
+
+
+
+
+**Step 2:** Start making venn diagrams.
+
+
+**Step 2a:** Make a venn diagram of Tc01 vs Tc1. 
+```{r Tc01_vs_Tc1}
+
+n1   <-  (na.omit((Tc01_Post_Test_Restricted[,1])   ))
+n2   <-  (na.omit((Tc1_Post_Test_Restricted[,1])   ))
+
+
+Tc01_vs_Tc1_Venn_Diagram <- draw.pairwise.venn(
+area1 = as.numeric(length (n1)),
+area2 = as.numeric(length (n2)),
+cross.area = as.numeric(length (intersect(n1,n2) ) ),
+category = c("Low Dose", "High Dose"),
+fill = c("blue", "red"),
+cex = 2,
+cat.cex = rep(2, 2),
+cat.fontface = rep("plain", 2),
+cat.just = list(c(0.9, -8), c(0.2, -13) ),
+scaled = TRUE,
+ cat.default.pos = "outer", cat.prompts = FALSE, rotation.degree = 0, rotation.centre = c(0.5, 0.5), direct.area = FALSE, area.vector = 0
+);
+grid.draw(Tc01_vs_Tc1_Venn_Diagram);
+grid.newpage();
+```
+
+**Step 2b:** Make a venn diagram comparing the mercury doses. 
+
+```{r Mercury_Dose_Comparisons}
+
+#All Hgs compared
+
+n1   <-  (na.omit(  (Hg1_Post_Test_Restricted[,1])   ))
+n2   <-  (na.omit(  (Hg01_Post_Test_Restricted[,1])  ))
+n3   <-  (na.omit(  (Hg001_Post_Test_Restricted[,1])  ))
+n12  <-        intersect( n1, n2) 
+n13  <-        intersect( n1, n3)
+n23  <-        intersect( n2, n3)
+n123 <-        intersect( n1, (intersect(n2, n3)) )
+
+
+Hgs_Compared <- draw.triple.venn(
+  
+                                      area1 = length(n1  ) , 
+                                      area2 = length(n2  ) , 
+                                      area3 = length(n3  ) ,
+                                      n12   = length(n12 ) , 
+                                      n23   = length(n23 ) , 
+                                      n13   = length(n13 ) , 
+                                      n123  = length(n123) ,
+                                      category = c("Hg1", "Hg01", "Hg001"),
+                                      fill    = c("darkseagreen1", "lightsalmon", "lightsalmon3"),
+                                      cat.cex = rep(2, 3), cat.fontface = rep("plain", 3),
+                                      cat.fontfamily = rep("serif", 3), 
+                                      cat.just =list(c(0.5, 1), c(0.5, 1), c(0.5, 0)), 
+                                      cat.default.pos = "outer", 
+                                      cat.prompts = FALSE, 
+                                      rotation.centre = c(0.5, 0.5), 
+                                      print.mode = "raw",
+                                      sigdigs = 3,
+                                      euler.d = TRUE);
+grid.draw(Hgs_Compared);
+grid.newpage();
+
+
+```
+
+**Step 2c:** Make a venn diagram comparing Tc01 and the mercury doses.
+
+```{r Tc01_vs_mercury_doses}
+# Tc01 vs All Hg Alone
+
+n1   <-  (na.omit((Tc01_Post_Test_Restricted[,1])   ))
+n2   <-  (na.omit((Hg1_Post_Test_Restricted[,1])   ))
+n3   <-  (na.omit((Hg01_Post_Test_Restricted[,1])  ))
+n4   <-  (na.omit((Hg001_Post_Test_Restricted[,1])  ))
+
+n12  <-        intersect( n1, n2)
+
+n13  <-        intersect( n1, n3)
+
+n14  <-        intersect( n1, n4)   
+
+n23  <-        intersect( n2, n3)   
+
+n24  <-        intersect( n2, n4)  
+
+n34  <-        intersect( n3, n4)  
+
+n123 <-        intersect( n1, (intersect(n2, n3)) )   
+
+n124 <-        intersect( n1, (intersect(n2, n4)) ) 
+
+n134 <-        intersect( n1, (intersect(n3, n4)) )  
+
+n234 <-        intersect( n2, (intersect(n3, n4)) )  
+
+n1234 <-       intersect( n1,intersect( n2, (intersect(n3, n4)) ) )
+
+Tc01_vs_All_Hg_Alone <- draw.quad.venn(
+  area1 = as.numeric(length( n1    )), 
+  area2 = as.numeric(length( n2    )),  
+  area3 = as.numeric(length( n3    )),
+  area4 = as.numeric(length( n4    )), 
+  n12   = as.numeric(length( n12   )),
+  n13   = as.numeric(length( n13   )), 
+  n14   = as.numeric(length( n14   )), 
+  n23   = as.numeric(length( n23   )), 
+  n24   = as.numeric(length( n24   )),
+  n34   = as.numeric(length( n34   )), 
+  n123  = as.numeric(length( n123  )), 
+  n124  = as.numeric(length( n124  )),
+  n134  = as.numeric(length( n134  )), 
+  n234  = as.numeric(length( n234  )), 
+  n1234 = as.numeric(length( n1234 )), 
+  category = c("TCDD LD", "Hg HD", "Hg MD", "Hg LD"),
+  fill = c("red", "cyan", "cornflowerblue", "blue"),
+  cat.col = c("red", "cyan", "cornflowerblue", "blue"),
+  cat.cex = rep(1, 4), 
+  cat.fontface = rep("plain", 4),
+  cat.fontfamily = rep("serif", 4), 
+  cat.just = rep(list(c(0.5, 0.5)), 4), 
+  rotation.degree = 0,
+  rotation.centre = c(0.5, 0.5), 
+  ind = TRUE, 
+  cex.prop = NULL, 
+  print.mode = "raw", sigdigs = 3, 
+  direct.area = FALSE, 
+  area.vector = 0,
+  euler.d = TRUE
+    );
+grid.draw(Tc01_vs_All_Hg_Alone);
+grid.newpage();
+```
+
+**Step 2d:** Make a venn diagram comparing Tc1 and the mercury doses.
+
+```{r Tc1_vs_Hg_doses}
+# Tc1 vs All Hg Alone
+
+n1   <-  (na.omit((Tc1_Post_Test_Restricted[,1])   ))
+n2   <-  (na.omit((Hg1_Post_Test_Restricted[,1])   ))
+n3   <-  (na.omit((Hg01_Post_Test_Restricted[,1])  ))
+n4   <-  (na.omit((Hg001_Post_Test_Restricted[,1])  ))
+
+n12  <-        intersect( n1, n2)
+
+n13  <-        intersect( n1, n3)
+
+n14  <-        intersect( n1, n4)   
+
+n23  <-        intersect( n2, n3)   
+
+n24  <-        intersect( n2, n4)  
+
+n34  <-        intersect( n3, n4)  
+
+n123 <-        intersect( n1, (intersect(n2, n3)) )   
+
+n124 <-        intersect( n1, (intersect(n2, n4)) ) 
+
+n134 <-        intersect( n1, (intersect(n3, n4)) )  
+
+n234 <-        intersect( n2, (intersect(n3, n4)) )  
+
+n1234 <-       intersect( n1,intersect( n2, (intersect(n3, n4)) ) )
+
+Tc01_vs_All_Hg_Alone <- draw.quad.venn(
+  area1 = as.numeric(length( n1    )), 
+  area2 = as.numeric(length( n2    )),  
+  area3 = as.numeric(length( n3    )),
+  area4 = as.numeric(length( n4    )), 
+  n12   = as.numeric(length( n12   )),
+  n13   = as.numeric(length( n13   )), 
+  n14   = as.numeric(length( n14   )), 
+  n23   = as.numeric(length( n23   )), 
+  n24   = as.numeric(length( n24   )),
+  n34   = as.numeric(length( n34   )), 
+  n123  = as.numeric(length( n123  )), 
+  n124  = as.numeric(length( n124  )),
+  n134  = as.numeric(length( n134  )), 
+  n234  = as.numeric(length( n234  )), 
+  n1234 = as.numeric(length( n1234 )), 
+  category = c("TCDD HD", "Hg HD", "Hg MD", "Hg LD"),
+  fill = c("red", "cyan", "cornflowerblue", "blue"),
+  cat.col = c("red", "cyan", "cornflowerblue", "blue"),
+  cat.cex = rep(1, 4), 
+  cat.fontface = rep("plain", 4),
+  cat.fontfamily = rep("serif", 4), 
+  cat.just = rep(list(c(0.5, 0.5)), 4), 
+  rotation.degree = 0,
+  rotation.centre = c(0.5, 0.5), 
+  ind = TRUE, 
+  cex.prop = NULL, 
+  print.mode = "raw", sigdigs = 3, 
+  direct.area = FALSE, 
+  area.vector = 0,
+  euler.d = TRUE
+    );
+grid.draw(Tc01_vs_All_Hg_Alone);
+grid.newpage();
+
+```
+
+**Step 2e:** Make a venn diagram comparing the low dose treatments.
+
+```{r LowDosesOfHgAloneTCDD_Alone_And_In_Combination}
+
+n1   <-  (na.omit((Hg01_Post_Test_Restricted[,1]     )   ))
+n2   <-  (na.omit((Tc01_Post_Test_Restricted[,1]     )   ))
+n3   <-  (na.omit((LD_Combin_Test_Restricted[,1]     )   ))
+n12  <-        intersect( n1, n2)
+n13  <-        intersect( n1, n3)
+n23  <-        intersect( n2, n3)
+n123 <-        intersect( n1, (intersect(n2, n3)) )
+
+LowDosesOfHgAloneTCDD_Alone_And_In_Combination <- draw.triple.venn(
+  
+                                      area1 = length(n1  ) , 
+                                      area2 = length(n2  ) , 
+                                      area3 = length(n3  ) ,
+                                      n12   = length(n12 ) , 
+                                      n23   = length(n23 ) , 
+                                      n13   = length(n13 ) , 
+                                      n123  = length(n123) ,
+                                      category = c("Mercury Low Dose", "TCDD Low Dose", "TCDD & Hg Both Low Dose"),
+                                      fill    = c("green", "lightsalmon", "blue"),
+                                      cat.col = c("black", "black", "black"),
+                                      cat.cex = rep(1, 3), cat.fontface = rep("plain", 3),
+                                      cat.fontfamily = rep("serif", 3), cat.just =list(c(0.5, 1), c(0.5, 1), c(0.5, 0)), cat.default.pos = "text", cat.prompts = FALSE, rotation.degree = 0, rotation.centre = c(0.5, 0.5), ind = TRUE, sep.dist = 0.05, offset = 0, cex.prop = NULL, print.mode = "raw",sigdigs = 3, direct.area = FALSE, area.vector = 0);
+grid.draw(LowDosesOfHgAloneTCDD_Alone_And_In_Combination);
+grid.newpage()
+```
+
+**Step 2f:** Make a venn diagram comparing the high dose treatments.
+
+```{r HigDoseAll_Compared_To_Ensembl}
+
+n1   <-  (na.omit((Hg1_Post_Test_Restricted[,1]     )   ))
+n2   <-  (na.omit((Tc1_Post_Test_Restricted[,1]     )   ))
+n3   <-  (na.omit((HD_Combin_Test_Restricted[,1]    )   ))
+n12  <-        intersect( n1, n2)
+n13  <-        intersect( n1, n3)
+n23  <-        intersect( n2, n3)
+n123 <-        intersect( n1, n23 )
+
+
+HighDosesOfHgAloneTCDD_Alone_And_In_Combination <- draw.triple.venn(
+  
+                                      area1 = length(n1  ) , 
+                                      area2 = length(n2  ) , 
+                                      area3 = length(n3  ) ,
+                                      n12   = length(n12 ) , 
+                                      n23   = length(n23 ) , 
+                                      n13   = length(n13 ) , 
+                                      n123  = length(n123) ,
+                                      category = c("Mercury High Dose", "TCDD High Dose", "TCDD & Hg Both High Dose"),
+                                      fill    = c("green", "lightsalmon", "blue"),
+                                      cat.col = c("black", "black", "black"),
+                                      cat.cex = rep(1, 3), cat.fontface = rep("plain", 3),
+                                      cat.fontfamily = rep("serif", 3), cat.just =list(c(0.5, 1), c(0.5, 1), c(0.5, 0)), cat.default.pos = "text", cat.prompts = FALSE, rotation.degree = 0, rotation.centre = c(0.5, 0.5), ind = TRUE, sep.dist = 0.05, offset = 0, cex.prop = NULL, print.mode = "raw",sigdigs = 3, direct.area = FALSE, area.vector = 0, scaled = TRUE, euler.d = TRUE);
+grid.draw(HighDosesOfHgAloneTCDD_Alone_And_In_Combination);
+grid.newpage()
+```
+
+**Step 3:** Move on to making comparisons of the ANOVA results. 
+
+```{r}
+remove(list = ls())
+
+TCDD_P_Val_Point01_Plus_FDR05 <- read.csv("StressorTCDD1_P_Val_FDR_Restricted_One_Way_ANOVA_Final.csv", header = TRUE, sep = ",")
+
+Hg_P_Val_Point01_Plus_FDR05 <- read.csv("StressorHg1_P_Val_FDR_Restricted_One_Way_ANOVA_Final.csv", header = TRUE, sep = ",")
+
+Combination_P_Val_Point01_Plus_FDR05 <- read.csv("StressorTCDD1_Hg1_P_Val_FDR_Restricted_One_Way_ANOVA_Final.csv", header = TRUE, sep = ",")
+```
+
+
+**Step 8**: How many genes are in the combination treatment.
+
+```{r}
+nrow(Combination_P_Val_Point01_Plus_FDR05)
+```
+
+**Step 9**: How many genes are in the TCDD treatment.
+
+```{r}
+nrow(TCDD_P_Val_Point01_Plus_FDR05)
+```
+
+
+**Step 10**: How many genes are in the Hg treatment.
+
+```{r}
+nrow(Hg_P_Val_Point01_Plus_FDR05)
+```
+
+
+**Step 11a**: How many genes are common between Combination and TCDD.
+
+```{r}
+(length (intersect (Combination_P_Val_Point01_Plus_FDR05[,1], 
+          TCDD_P_Val_Point01_Plus_FDR05[,1]) ) )
+```
+
+**Step 11b**: What percent of genes in the combination treatment are in common with TCDD?
+
+```{r}
+
+# (Total genes in common / genes only in Combination treatment ) *100
+
+((length (intersect (Combination_P_Val_Point01_Plus_FDR05[,1], 
+          TCDD_P_Val_Point01_Plus_FDR05[,1]) ) ) / nrow(Combination_P_Val_Point01_Plus_FDR05) ) * 100
+
+
+```
+
+**Step 12a**: How many genes are common between Combination and Hg.
+
+```{r}
+(length (intersect (Combination_P_Val_Point01_Plus_FDR05[,1], 
+          Hg_P_Val_Point01_Plus_FDR05[,1]) ) )
+```
+
+**Step 12b**: What percent of genes in the combination treatment are in common with Hg?
+
+```{r}
+
+# (Total genes in common / genes only in Combination treatment ) *100
+
+(
+ 
+  
+   (
+    
+    length 
+  
+  (intersect (Combination_P_Val_Point01_Plus_FDR05[,1],
+                     Hg_P_Val_Point01_Plus_FDR05[,1]) ) 
+  
+  )
+  
+ / nrow(Combination_P_Val_Point01_Plus_FDR05) 
+
+  
+ ) * 100
+
+
+```
+
+**Step 13a**: How many genes are common between TCDD and Hg.
+
+```{r}
+(length (intersect (TCDD_P_Val_Point01_Plus_FDR05[,1], 
+          Hg_P_Val_Point01_Plus_FDR05[,1]) ) )
+```
+
+**Step 13b**: What percent of genes in the TCDD treatment are in common with Hg?
+
+```{r}
+
+# (Total genes in common / genes only in Combination treatment ) *100
+
+(
+ 
+  
+   (
+    
+    length 
+  
+  (intersect (TCDD_P_Val_Point01_Plus_FDR05[,1],
+                     Hg_P_Val_Point01_Plus_FDR05[,1]) ) 
+  
+  )
+  
+ / nrow(TCDD_P_Val_Point01_Plus_FDR05) 
+
+  
+ ) * 100
+
+
+```
+
+**Step 13c**: What percent of genes in the Combination treatment are unique to this treatment?
+
+
+```{r}
+Intersect_between_Combiantion_and_Hg <- (length (intersect (Combination_P_Val_Point01_Plus_FDR05[,1], 
+          Hg_P_Val_Point01_Plus_FDR05[,1]) ) )
+
+Intersect_between_Combiantion_and_TCDD <-(length (intersect (Combination_P_Val_Point01_Plus_FDR05[,1], 
+          TCDD_P_Val_Point01_Plus_FDR05[,1]) ) )
+
+Intersects_Alone <- Intersect_between_Combiantion_and_TCDD  + Intersect_between_Combiantion_and_Hg
+
+# 100 - Percentage of Intersects of alone treatments with combination
+ 100 - ( (Intersects_Alone / nrow(Combination_P_Val_Point01_Plus_FDR05) )*100)
+```
+
+**Step 13d**: What genes are only effected by the intersects?
+
+```{r}
+
+Intersects_Alone
+```
+
+
+**Step 13e**: What genes are only effected by the combination treatment?
+
+```{r}
+
+length(Combination_P_Val_Point01_Plus_FDR05[,1]) - Intersects_Alone
+
+```
+
