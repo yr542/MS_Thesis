@@ -1,0 +1,280 @@
+---
+title: "October_3_2019_isolate_Ensembl_IDs"
+author: "Yasmin Rajendran"
+date: "October 3, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Step 1**: Join the counts matrix to the Ensembl IDs. Do the 1 Way ANOVA with an FDR restriction. Create pie charts as well.
+
+```{r Counts_Matrix_To_Ensembl_IDs, echo=TRUE,warning=FALSE,message=FALSE, echo=FALSE,results='hide'}
+remove(list = ls())
+
+data <- read.delim("all.counts2_6_20_2018.txt", row.names=1, header=T)
+
+
+
+colnames( data ) <- paste(c("W", "W", "W", 
+                            "Ac", "Ac", "Ac", 
+                            "Hg001", "Hg001", "Hg001",
+                            "Hg01", "Hg01", "Hg01", 
+                            "Hg1", "Hg1", "Hg1", 
+                            "Tc01", "Tc01", "Tc01", 
+                            "Tc1", "Tc1", "Tc1", 
+                            "Tc01.Hg01", "Tc01.Hg01", "Tc01.Hg01", 
+                            "Tc01.Hg1", "Tc01.Hg1", "Tc01.Hg1",
+                            "Tc1.Hg01", "Tc1.Hg01","Tc1.Hg01", 
+                            "Tc1.Hg1", "Tc1.Hg1", "Tc1.Hg1"),sep="")
+
+group <- c("W", "W", "W", 
+           "Ac", "Ac", "Ac", 
+           "Hg001", "Hg001", "Hg001",
+           "Hg01", "Hg01", "Hg01", 
+           "Hg1", "Hg1", "Hg1", 
+           "Tc01", "Tc01", "Tc01", 
+           "Tc1", "Tc1", "Tc1", 
+           "Tc01.Hg01", "Tc01.Hg01", "Tc01.Hg01", 
+           "Tc01.Hg1", "Tc01.Hg1", "Tc01.Hg1",
+           "Tc1.Hg01", "Tc1.Hg01","Tc1.Hg01", 
+           "Tc1.Hg1", "Tc1.Hg1", "Tc1.Hg1")
+
+
+# Do normalization after merging in UniRef100 IDs
+
+# Import blast file
+
+Blasted_2 <-  read.table("Tom_v_Zf_6_20_2018.blast", sep = "\t")
+options(scipen = 999)
+
+colnames(Blasted_2) <- c("XLOC", "UniRef100","Col3", "Col4", "Col5")
+
+Blasted_2 <- Blasted_2[ -c(3:5) ]
+
+Blasted_Again <-  as.data.frame(lapply(Blasted_2[1:2], sub, pattern="\\s+.*", replacement=""))
+
+data <- cbind(XLOC = rownames(data), data) 
+
+Merged_UniRef <- merge(Blasted_Again, as.matrix(data), by = "XLOC")
+
+Removal <- c("XLOC")
+
+Removal_1 <- Merged_UniRef[ , !(names(Merged_UniRef) %in% Removal)]
+
+x_dt_aggreg <- aggregate(. ~ UniRef100, Removal_1, sum)
+
+Merged_UniRef <- x_dt_aggreg[,-1]
+rownames(Merged_UniRef) <- x_dt_aggreg[,1]
+
+# Take (non-normalized data) data and isolate the first column
+
+First_Col <-  as.data.frame( as.matrix(rownames(Merged_UniRef)) )
+
+rownames(data) <- NULL
+
+write.table(First_Col, file = "UniRef_100_IDs.txt", sep = " ", row.names= FALSE, col.names = FALSE )
+
+#Go to https://www.uniprot.org/uploadlists/ and convert from UniRef100 IDs to UniProtK
+
+#Copied to Notepad ++ and removed all the quotes. Then copied the list to the site.
+
+colnames(First_Col) <- "UniRef100"
+
+UniRef100_to_UniProtKB <- read.table( "Mapping_Table_UniRef_100_to_UniProtKB", sep="\t", header=TRUE, fill = TRUE)
+
+colnames(UniRef100_to_UniProtKB) <- c("UniRef100", "UniProtKB" )
+
+UniRef100_to_UniProtKB_merge_to_data <- merge(First_Col, UniRef100_to_UniProtKB, by = "UniRef100")
+
+colnames(UniRef100_to_UniProtKB_merge_to_data)[2] <- "UniProtKB"
+
+write.table(  (UniRef100_to_UniProtKB_merge_to_data[2] ), file = "UniProtKB.txt", sep = " ", row.names= FALSE, col.names = FALSE)
+
+##Look up the IDs in David restricting to the Zebrafish IDs.
+
+UniProtKB_Ensembl <- read.table("Dec_20_2018_UniProtKB_to_Ensembl_ID_From_David.txt", sep="\t")
+
+head(UniProtKB_Ensembl)
+
+UniProtKB_Ensembl_IDs_Only <- UniProtKB_Ensembl
+
+# Remove the species name column and the gene name column leaving the UniProtKB ID column and the Ensembl ID column
+
+UniProtKB_Ensembl_IDs_Only <- UniProtKB_Ensembl_IDs_Only [, -c(3:4)] 
+
+#Remove the first row as it contains the words "From" and "To"
+
+UniProtKB_Ensembl_IDs_Only <- UniProtKB_Ensembl_IDs_Only [-1,]
+
+# Name the columns
+
+names(UniProtKB_Ensembl_IDs_Only) <- c("UniProtKB", "Ensembl_ID")
+
+Merge_All_UniProtKB_UniRef100_Ensembl <- merge(UniProtKB_Ensembl_IDs_Only, UniRef100_to_UniProtKB, by = "UniProtKB")
+
+Dt_and_Merge_All <- merge (Merge_All_UniProtKB_UniRef100_Ensembl, x_dt_aggreg, by = "UniRef100" )
+
+Ensembl_ID_data_set <- Dt_and_Merge_All[ , -which(names(Dt_and_Merge_All) %in% c("UniRef100","UniProtKB"))]
+
+#Now on to aggregating by ID. 
+
+rm(list=setdiff(ls(), "Ensembl_ID_data_set"))
+
+Data_with_Ensembl_IDs_1 <- aggregate(. ~ Ensembl_ID, data = Ensembl_ID_data_set, sum)
+
+Data_with_Ensembl_IDs_1_1 <- transform(Data_with_Ensembl_IDs_1, 
+                          W = as.numeric(W), 
+                          W.1 = as.numeric(W.1),
+                          W.2 = as.numeric(W.2),
+                   
+                           Ac = as.numeric(Ac),
+                         Ac.1 = as.numeric(Ac.1),
+                         Ac.2 = as.numeric(Ac.2),
+                   
+                        Hg001 = as.numeric(Hg001),
+                      Hg001.1 = as.numeric(Hg001.1),
+                      Hg001.2 = as.numeric(Hg001.2),
+
+                        Hg01 = as.numeric(Hg01),
+                      Hg01.1 = as.numeric(Hg01.1),
+                      Hg01.2 = as.numeric(Hg01.2),
+
+                         Hg1 = as.numeric(Hg1),
+                       Hg1.1 = as.numeric(Hg1.1),
+                       Hg1.2 = as.numeric(Hg1.2),
+
+                        Tc01 = as.numeric(Tc01),
+                      Tc01.1 = as.numeric(Tc01.1),
+                      Tc01.2 = as.numeric(Tc01.2),
+
+                        Tc1 = as.numeric(Tc1),
+                      Tc1.1 = as.numeric(Tc1.1),
+                      Tc1.2 = as.numeric(Tc1.2),
+                        
+                  Tc01.Hg01 = as.numeric(Tc01.Hg01),
+                Tc01.Hg01.1 = as.numeric(Tc01.Hg01.1),
+                Tc01.Hg01.2 = as.numeric(Tc01.Hg01.2),
+
+                   Tc01.Hg1 = as.numeric(Tc01.Hg1),
+                 Tc01.Hg1.1 = as.numeric(Tc01.Hg1.1),
+                 Tc01.Hg1.2 = as.numeric(Tc01.Hg1.2),
+
+                   Tc1.Hg01 = as.numeric(Tc1.Hg01),
+                 Tc1.Hg01.1 = as.numeric(Tc1.Hg01.1),
+                 Tc1.Hg01.2 = as.numeric(Tc1.Hg01.2),
+
+                    Tc1.Hg1 = as.numeric(Tc1.Hg1),
+                  Tc1.Hg1.1 = as.numeric(Tc1.Hg1.1),
+                  Tc1.Hg1.2 = as.numeric(Tc1.Hg1.2) )
+
+
+
+M_N_1 <- as.matrix(Data_with_Ensembl_IDs_1_1)
+
+M_N_2 <- M_N_1[,-1]
+rownames(M_N_2) <- M_N_1[,1]
+M_N_1_ME <- M_N_2
+
+M_N_1_ME_1 <- transform(M_N_1_ME, 
+                          W = as.numeric(W), 
+                          W.1 = as.numeric(W.1),
+                          W.2 = as.numeric(W.2),
+                   
+                           Ac = as.numeric(Ac),
+                         Ac.1 = as.numeric(Ac.1),
+                         Ac.2 = as.numeric(Ac.2),
+                   
+                        Hg001 = as.numeric(Hg001),
+                      Hg001.1 = as.numeric(Hg001.1),
+                      Hg001.2 = as.numeric(Hg001.2),
+
+                        Hg01 = as.numeric(Hg01),
+                      Hg01.1 = as.numeric(Hg01.1),
+                      Hg01.2 = as.numeric(Hg01.2),
+
+                         Hg1 = as.numeric(Hg1),
+                       Hg1.1 = as.numeric(Hg1.1),
+                       Hg1.2 = as.numeric(Hg1.2),
+
+                        Tc01 = as.numeric(Tc01),
+                      Tc01.1 = as.numeric(Tc01.1),
+                      Tc01.2 = as.numeric(Tc01.2),
+
+                        Tc1 = as.numeric(Tc1),
+                      Tc1.1 = as.numeric(Tc1.1),
+                      Tc1.2 = as.numeric(Tc1.2),
+                        
+                  Tc01.Hg01 = as.numeric(Tc01.Hg01),
+                Tc01.Hg01.1 = as.numeric(Tc01.Hg01.1),
+                Tc01.Hg01.2 = as.numeric(Tc01.Hg01.2),
+
+                   Tc01.Hg1 = as.numeric(Tc01.Hg1),
+                 Tc01.Hg1.1 = as.numeric(Tc01.Hg1.1),
+                 Tc01.Hg1.2 = as.numeric(Tc01.Hg1.2),
+
+                   Tc1.Hg01 = as.numeric(Tc1.Hg01),
+                 Tc1.Hg01.1 = as.numeric(Tc1.Hg01.1),
+                 Tc1.Hg01.2 = as.numeric(Tc1.Hg01.2),
+
+                    Tc1.Hg1 = as.numeric(Tc1.Hg1),
+                  Tc1.Hg1.1 = as.numeric(Tc1.Hg1.1),
+                  Tc1.Hg1.2 = as.numeric(Tc1.Hg1.2) )
+
+
+M_N_1_ME_1 <- data.frame(Ensembl = row.names(M_N_1_ME_1), M_N_1_ME_1)
+
+rownames(M_N_1_ME_1) <- NULL
+
+colnames( M_N_1_ME_1 ) <- paste(c("Ensembl",
+                             "W", "W", "W", 
+                            "Ac", "Ac", "Ac", 
+                            "Hg001", "Hg001", "Hg001",
+                            "Hg01", "Hg01", "Hg01", 
+                            "Hg1", "Hg1", "Hg1", 
+                            "Tc01", "Tc01", "Tc01", 
+                            "Tc1", "Tc1", "Tc1", 
+                            "Tc01.Hg01", "Tc01.Hg01", "Tc01.Hg01", 
+                            "Tc01.Hg1", "Tc01.Hg1", "Tc01.Hg1",
+                            "Tc1.Hg01", "Tc1.Hg01","Tc1.Hg01", 
+                            "Tc1.Hg1", "Tc1.Hg1", "Tc1.Hg1"),sep="")
+group <- c("W", "W", "W", 
+           "Ac", "Ac", "Ac", 
+           "Hg001", "Hg001", "Hg001",
+           "Hg01", "Hg01", "Hg01", 
+           "Hg1", "Hg1", "Hg1", 
+           "Tc01", "Tc01", "Tc01", 
+           "Tc1", "Tc1", "Tc1", 
+           "Tc01.Hg01", "Tc01.Hg01", "Tc01.Hg01", 
+           "Tc01.Hg1", "Tc01.Hg1", "Tc01.Hg1",
+           "Tc1.Hg01", "Tc1.Hg01","Tc1.Hg01", 
+           "Tc1.Hg1", "Tc1.Hg1", "Tc1.Hg1")
+
+M_N_1_ME_1 <- as.data.frame(as.matrix(M_N_1_ME_1) )
+
+M_N_1_ME_1_1 <- M_N_1_ME_1[,-1]
+rownames(M_N_1_ME_1_1) <- M_N_1_ME_1[,1]
+
+M_N_1_ME_1_1[which( sapply( M_N_1_ME_1_1, class ) == 'factor' )] <- lapply( M_N_1_ME_1_1[which( sapply( M_N_1_ME_1_1, class ) == 'factor' )], function(x) as.numeric(as.character(x)) )
+
+# Counts with Ensembl IDs
+
+a <- as.matrix(M_N_1_ME_1_1)
+
+Counts_Data_Set_With_Aggregated_Ensembl_IDs <- a
+
+rm(list=setdiff(ls(), c("Counts_Data_Set_With_Aggregated_Ensembl_IDs", "group")) )
+```
+
+
+
+```{r}
+write.table(Counts_Data_Set_With_Aggregated_Ensembl_IDs, file = "Counts_Data_Set_With_Aggregated_Ensembl_IDs.txt", sep = " ", row.names= TRUE, col.names = TRUE )
+```
+
+
+
+
+
